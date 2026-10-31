@@ -21,6 +21,19 @@
     (is (equal once twice))
     (is (equal once (cpu-features)))))
 
+(test flag-name-normalization
+  (is (eq :sse4.1 (sb-cpu-features::normalize-feature-name "sse4_1")))
+  (is (eq :avx2 (sb-cpu-features::normalize-feature-name "avx2")))
+  (is (eq :avx512vnni
+          (sb-cpu-features::normalize-feature-name "avx512_vnni"))))
+
+(test flag-list-parsing
+  (let ((flags (sb-cpu-features::parse-flag-list
+                (format nil "sse4_1~Cavx2~Csha_ni" #\Tab #\Tab))))
+    (is (eq :sse4.1 (first flags)))
+    (is (member :avx2 flags))
+    (is (member :sha-ni flags))))
+
 (test masking-disables-a-feature
   (let ((feature (first (cpu-features))))
     (if feature

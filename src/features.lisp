@@ -41,7 +41,7 @@ and the macOS AVX1.0 style while preserving other names."
   (let* ((down (string-downcase string))
          (alias (cdr (assoc down +feature-aliases+ :test #'string=))))
     (or alias
-        (intern (substitute #\- #\_ down) :keyword))))
+        (intern (string-upcase (substitute #\- #\_ down)) :keyword))))
 
 (defun parse-flag-list (string)
   (loop with start = 0
@@ -54,26 +54,33 @@ and the macOS AVX1.0 style while preserving other names."
                      (list (normalize-feature-name word))))
           and do (setf start (1+ i))))
 
-(defun linux-cpu-flags ()
-  "Return the feature keywords from /proc/cpuinfo, or NIL if unavailable.
-Linux omits flags whose OS state is not enabled, so this is authoritative
-for AVX/AVX2/AVX-512 availability."
-  #+linux
+(defun %proc-cpu-flags (path)
+  "Read the first FLAGS/FEATURES line of PATH, or NIL if unavailable."
   (handler-case
-      (with-open-file (stream "/proc/cpuinfo" :if-does-not-exist nil)
+      (with-open-file (stream path :if-does-not-exist nil)
         (when stream
           (loop for line = (read-line stream nil nil)
                 while line
-                when (let ((colon (position #\: line)))
-                       (and colon
-                            (let ((key (string-downcase
-                                        (string-trim " " (subseq line 0 colon)))))
-                              (or (string= key "flags")
-                                  (string= key "features")))))
-                  do (let ((colon (position #\: line)))
-                       (return (parse-flag-list (subseq line (1+ colon))))))))
-    (error () nil))
-  #-linux nil)
+                do (let ((colon (position #\: line)))
+                     (when colon
+                       (let* ((key (string-downcase
+                                    (string-trim '(#\Space #\Tab)
+                                                 (subseq line 0 colon)))))
+                         (when (or (string= key "flags")
+                                   (string= key "features"))
+                           (return-from %proc-cpu-flags
+                             (parse-flag-list (subseq line (1+ colon)))))))))))
+    (error () nil)))
+
+(defun linux-cpu-flags ()
+  "Return the feature keywords from /proc/cpuinfo, or NIL if unavailable.
+Linux omits flags whose OS state is not enabled, so this is authoritative
+for AVX/AVX2/AVX-512 availability.
+
+UIOP's OS detection is used instead of #+LINUX because some implementations
+(for example ECL) do not put :LINUX in *FEATURES*."
+  (when (uiop:os-unix-p)
+    (%proc-cpu-flags "/proc/cpuinfo")))
 
 (defun run-lines (program arguments)
   #+sbcl
@@ -89,17 +96,37 @@ for AVX/AVX2/AVX-512 availability."
                      while line collect line)
             (ignore-errors (close stream)))))
     (error () nil))
-  #-sbcl nil)
+  #-sbcl
+  (handler-case
+      (uiop:run-program (cons program arguments)
+                        :output :lines
+                        :ignore-error-status t)
+    (error () nil)))
 
 (defun macos-cpu-flags ()
-  #+darwin
-  (let ((lines (append
-                (run-lines "/usr/sbin/sysctl" '("-n" "machdep.cpu.features"))
-                (run-lines "/usr/sbin/sysctl" '("-n" "machdep.cpu.leaf7_features")))))
-    (when lines
-      (remove-duplicates
-       (mapcan #'parse-flag-list lines) :test #'eq :from-end t)))
-  #-darwin nil)
+  "Return CPU features reported by sysctl on macOS.
+On x86-64 the machdep.cpu.* keys provide SSE/AVX/etc.  On Apple Silicon
+the hw.optional.* keys provide the ARM SIMD/crypto extensions."
+  (when (uiop:os-macosx-p)
+    (let ((lines (append
+                  (run-lines "/usr/sbin/sysctl" '("-n" "machdep.cpu.features"))
+                  (run-lines "/usr/sbin/sysctl"
+                             '("-n" "machdep.cpu.leaf7_features")))))
+      (if lines
+          (remove-duplicates
+           (mapcan #'parse-flag-list lines) :test #'eq :from-end t)
+          (loop for (key feature) in '(("hw.optional.neon" . :neon)
+                                       ("hw.optional.armv8_crc32" . :crc32)
+                                       ("hw.optional.armv8_1_atomics" . :atomics)
+                                       ("hw.optional.armv8_1_crc32" . :crc32)
+                                       ("hw.optional.armv8_1_sha2" . :sha2)
+                                       ("hw.optional.armv8_2_sha3" . :sha3)
+                                       ("hw.optional.armv8_2_sha512" . :sha512)
+                                       ("hw.optional.aes" . :aes)
+                                       ("hw.optional.pmull" . :pmull))
+                when (equal (run-lines "/usr/sbin/sysctl" (list "-n" key))
+                            '("1"))
+                  collect feature)))))
 
 ;;; CPUID fallback ----------------------------------------------------
 
@@ -132,7 +159,7 @@ these after CPUID plus XGETBV.  NAME is one of the strings \"avx_supported\",
                ("avx512_supported"
                 (sb-alien:extern-alien "avx512_supported" sb-alien:int))))
     (error () nil))
-  #-sbcl nil)
+  #-sbcl (progn name nil))
 
 (defun cpuid-cpu-flags ()
   #+(and sbcl x86-64)

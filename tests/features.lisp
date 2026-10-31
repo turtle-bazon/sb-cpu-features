@@ -51,6 +51,13 @@
             (is (not (cpu-feature-p other)))))
         (pass "no features to test"))))
 
+(test masking-accepts-literal-keyword-lists
+  (with-cpu-features-disabled (:avx2)
+    (is (not (cpu-feature-p :avx2))))
+  (with-cpu-features-only (:avx2)
+    (is (eq (not (null (cpu-feature-p :avx2)))
+            (not (null (member :avx2 (detected-cpu-features))))))))
+
 (defun dispatch-avx2 () :avx2)
 (defun dispatch-sse () :sse)
 (defun dispatch-scalar () :scalar)

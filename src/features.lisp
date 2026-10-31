@@ -245,16 +245,25 @@ WITH-CPU-FEATURES-DISABLED."
   (and (member feature (cpu-features) :test #'eq) t))
 
 (defmacro with-cpu-features-disabled (features &body body)
-  "Evaluate BODY with FEATURES hidden from CPU-FEATURE-P."
-  `(let ((*disabled-cpu-features*
-           (union ,features *disabled-cpu-features* :test #'eq)))
-     ,@body))
+  "Evaluate BODY with FEATURES hidden from CPU-FEATURE-P.  FEATURES is
+either a literal list of keywords or a form evaluating to such a list."
+  (let ((feature-form (if (and (consp features) (every #'keywordp features))
+                          `',features
+                          features)))
+    `(let ((*disabled-cpu-features*
+             (union ,feature-form *disabled-cpu-features* :test #'eq)))
+       ,@body)))
 
 (defmacro with-cpu-features-only (features &body body)
-  "Evaluate BODY with only FEATURES visible."
-  `(let ((*disabled-cpu-features*
-           (set-difference (detected-cpu-features) ,features :test #'eq)))
-     ,@body))
+  "Evaluate BODY with only FEATURES visible.  FEATURES is either a literal
+list of keywords or a form evaluating to such a list."
+  (let ((feature-form (if (and (consp features) (every #'keywordp features))
+                          `',features
+                          features)))
+    `(let ((*disabled-cpu-features*
+             (set-difference (detected-cpu-features) ,feature-form
+                             :test #'eq)))
+       ,@body)))
 
 ;; Probe at load and on every image restart.
 (refresh-cpu-features)

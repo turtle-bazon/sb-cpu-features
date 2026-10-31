@@ -68,3 +68,7 @@ sbcl --non-interactive \
   --eval '(asdf:load-system "sb-cpu-features-tests" :force t)' \
   --eval '(sb-cpu-features-tests:run-tests)'
 ```
+
+## License
+
+GNU General Public License v3.0 or later.  See `LICENSE`.

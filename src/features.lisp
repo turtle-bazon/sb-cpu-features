@@ -1,14 +1,17 @@
 (in-package #:sb-cpu-features)
 
-;;; CPU feature detection and caching.
+;;; CPU feature detection and caching.  SBCL only.
 ;;;
 ;;; The cache is re-probed at image startup (SB-EXT:*INIT-HOOKS*), so a saved
 ;;; image moved to another machine reports the new machine's features rather
 ;;; than the build machine's.
 ;;;
-;;; On Linux, /proc/cpuinfo is preferred because the kernel only lists features
-;;; whose OS state is enabled (notably AVX/AVX2/AVX-512).  On other systems we
-;;; fall back to CPUID plus SBCL's XGETBV-backed AVX support flags.
+;;; On x86-64 detection is CPUID plus SBCL's XGETBV-backed AVX support flags.
+;;; On other architectures (for example ARM), /proc/cpuinfo or sysctl is used.
+
+#-sbcl
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (error "SB-CPU-FEATURES requires SBCL."))
 
 (defvar *detected-cpu-features* nil
   "Raw feature keywords detected on the current machine.")
@@ -75,15 +78,12 @@ and the macOS AVX1.0 style while preserving other names."
 (defun linux-cpu-flags ()
   "Return the feature keywords from /proc/cpuinfo, or NIL if unavailable.
 Linux omits flags whose OS state is not enabled, so this is authoritative
-for AVX/AVX2/AVX-512 availability.
-
-UIOP's OS detection is used instead of #+LINUX because some implementations
-(for example ECL) do not put :LINUX in *FEATURES*."
-  (when (uiop:os-unix-p)
-    (%proc-cpu-flags "/proc/cpuinfo")))
+for AVX/AVX2/AVX-512 availability.  Used on non-x86-64 SBCL builds."
+  #+linux
+  (%proc-cpu-flags "/proc/cpuinfo")
+  #-linux nil)
 
 (defun run-lines (program arguments)
-  #+sbcl
   (handler-case
       (with-open-stream (stream (sb-ext:run-program program arguments
                                                     :output :stream
@@ -95,53 +95,49 @@ UIOP's OS detection is used instead of #+LINUX because some implementations
                (loop for line = (read-line stream nil nil)
                      while line collect line)
             (ignore-errors (close stream)))))
-    (error () nil))
-  #-sbcl
-  (handler-case
-      (uiop:run-program (cons program arguments)
-                        :output :lines
-                        :ignore-error-status t)
     (error () nil)))
 
 (defun macos-cpu-flags ()
   "Return CPU features reported by sysctl on macOS.
 On x86-64 the machdep.cpu.* keys provide SSE/AVX/etc.  On Apple Silicon
-the hw.optional.* keys provide the ARM SIMD/crypto extensions."
-  (when (uiop:os-macosx-p)
-    (let ((lines (append
-                  (run-lines "/usr/sbin/sysctl" '("-n" "machdep.cpu.features"))
-                  (run-lines "/usr/sbin/sysctl"
-                             '("-n" "machdep.cpu.leaf7_features")))))
-      (if lines
-          (remove-duplicates
-           (mapcan #'parse-flag-list lines) :test #'eq :from-end t)
-          (loop for (key feature) in '(("hw.optional.neon" . :neon)
-                                       ("hw.optional.armv8_crc32" . :crc32)
-                                       ("hw.optional.armv8_1_atomics" . :atomics)
-                                       ("hw.optional.armv8_1_crc32" . :crc32)
-                                       ("hw.optional.armv8_1_sha2" . :sha2)
-                                       ("hw.optional.armv8_2_sha3" . :sha3)
-                                       ("hw.optional.armv8_2_sha512" . :sha512)
-                                       ("hw.optional.aes" . :aes)
-                                       ("hw.optional.pmull" . :pmull))
-                when (equal (run-lines "/usr/sbin/sysctl" (list "-n" key))
-                            '("1"))
-                  collect feature)))))
+the hw.optional.* keys provide the ARM SIMD/crypto extensions.  Used on
+non-x86-64 SBCL builds."
+  #+darwin
+  (let ((lines (append
+                (run-lines "/usr/sbin/sysctl" '("-n" "machdep.cpu.features"))
+                (run-lines "/usr/sbin/sysctl"
+                           '("-n" "machdep.cpu.leaf7_features")))))
+    (if lines
+        (remove-duplicates
+         (mapcan #'parse-flag-list lines) :test #'eq :from-end t)
+        (loop for (key feature) in '(("hw.optional.neon" . :neon)
+                                     ("hw.optional.armv8_crc32" . :crc32)
+                                     ("hw.optional.armv8_1_atomics" . :atomics)
+                                     ("hw.optional.armv8_1_crc32" . :crc32)
+                                     ("hw.optional.armv8_1_sha2" . :sha2)
+                                     ("hw.optional.armv8_2_sha3" . :sha3)
+                                     ("hw.optional.armv8_2_sha512" . :sha512)
+                                     ("hw.optional.aes" . :aes)
+                                     ("hw.optional.pmull" . :pmull))
+              when (equal (run-lines "/usr/sbin/sysctl" (list "-n" key))
+                          '("1"))
+                collect feature)))
+  #-darwin nil)
 
 ;;; CPUID fallback ----------------------------------------------------
 
-#+(and sbcl x86-64)
+#+x86-64
 (defun cpuid-values (leaf subleaf)
   (handler-case
       (multiple-value-list (sb-vm::%cpu-identification leaf subleaf))
     (error () nil)))
 
-#+(and sbcl x86-64)
+#+x86-64
 (defun cpuid-register-bit-p (values register index)
   "VALUES is (EAX EBX ECX EDX); REGISTER is 0..3."
   (and values (logbitp index (nth register values))))
 
-#+(and sbcl x86-64)
+#+x86-64
 (defun cpuid-bit-p (values index)
   (cpuid-register-bit-p values 2 index))
 
@@ -149,7 +145,6 @@ the hw.optional.* keys provide the ARM SIMD/crypto extensions."
   "Ask SBCL's runtime whether the OS enabled AVX state.  The runtime sets
 these after CPUID plus XGETBV.  NAME is one of the strings \"avx_supported\",
 \"avx2_supported\" or \"avx512_supported\"."
-  #+sbcl
   (handler-case
       (plusp (ecase name
                ("avx_supported"
@@ -158,11 +153,10 @@ these after CPUID plus XGETBV.  NAME is one of the strings \"avx_supported\",
                 (sb-alien:extern-alien "avx2_supported" sb-alien:int))
                ("avx512_supported"
                 (sb-alien:extern-alien "avx512_supported" sb-alien:int))))
-    (error () nil))
-  #-sbcl (progn name nil))
+    (error () nil)))
 
 (defun cpuid-cpu-flags ()
-  #+(and sbcl x86-64)
+  #+x86-64
   (let ((leaf0 (cpuid-values 0 0)))
     (when (and leaf0 (>= (first leaf0) 1))
       (let* ((leaf1 (cpuid-values 1 0))
@@ -214,7 +208,7 @@ these after CPUID plus XGETBV.  NAME is one of the strings \"avx_supported\",
           (add :avx512bitalg (and (ecx7 12) (sbcl-avx-os-p "avx512_supported")))
           (add :avx512vpopcntdq (and (ecx7 14) (sbcl-avx-os-p "avx512_supported")))
           (nreverse features)))))
-  #-(and sbcl x86-64) nil)
+  #-x86-64 nil)
 
 (defun detect-cpu-features ()
   "Detect the current machine's CPU features and return a list of keywords.
@@ -264,4 +258,4 @@ WITH-CPU-FEATURES-DISABLED."
 
 ;; Probe at load and on every image restart.
 (refresh-cpu-features)
-#+sbcl (pushnew 'refresh-cpu-features sb-ext:*init-hooks*)
+(pushnew 'refresh-cpu-features sb-ext:*init-hooks*)

@@ -8,12 +8,12 @@
   (is (equalp (cpu-features) (detected-cpu-features))))
 
 (test baseline-x86-64-features
-  #+(and sbcl x86-64)
+  #+x86-64
   (progn
     (is (cpu-feature-p :sse2))
     (is (not (null (member :sse2 (cpu-features))))))
-  #-(and sbcl x86-64)
-  (pass "no features to test"))
+  #-x86-64
+  (pass "no x86-64 baseline features to test"))
 
 (test refresh-is-idempotent
   (let ((once (refresh-cpu-features))
@@ -73,6 +73,5 @@
         (is (eq (funcall (dispatch-test)) :sse))
         (is (eq (funcall (dispatch-test)) :scalar)))))
 
-#+sbcl
 (test init-hook-registered
   (is (member 'refresh-cpu-features sb-ext:*init-hooks*)))

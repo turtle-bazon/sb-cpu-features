@@ -12,6 +12,20 @@ C runtimes use and does not require `/proc/cpuinfo`.
 `/proc/cpuinfo` / `sysctl` are used only as a fallback on platforms where
 CPUID is unavailable, such as ARM Linux or ARM macOS.
 
+## Platform support
+
+| platform | detection |
+|----------|-----------|
+| SBCL x86-64, any OS (Linux, macOS, Windows, BSD) | CPUID + SBCL XGETBV flags; no `/proc` needed |
+| Linux ARM | `/proc/cpuinfo` `Features:` fallback |
+| macOS x86-64 | CPUID; `sysctl` fallback only if CPUID is unavailable |
+| macOS ARM64 | `sysctl hw.optional.*` fallback (currently partial) |
+| other architectures | empty feature list, so dispatchers take `:default` |
+| non-SBCL on Linux | CPUID is unavailable; `/proc/cpuinfo` fallback |
+| non-SBCL on other OSes | empty feature list unless a platform fallback is added |
+
+The image-restart hook uses `SB-EXT:*INIT-HOOKS*`, so it is SBCL-specific.
+
 The feature list is re-probed at image startup via `SB-EXT:*INIT-HOOKS*`,
 so an image moved to another machine reports the new machine's features.
 

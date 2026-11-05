@@ -12,4 +12,7 @@
 
 (in-package :sb-cpu-features)
 
-(sb-alien:define-alien-variable avx2-supported sb-alien:int)
+;; The runtime symbol spells the name with an underscore; without the
+;; explicit C name this binding resolved "avx2-supported", which does not
+;; exist. The variable is live, so an image restart needs no re-registration.
+(sb-alien:define-alien-variable ("avx2_supported" avx2-supported) sb-alien:int)

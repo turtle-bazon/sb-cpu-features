@@ -82,3 +82,23 @@
 
 (test init-hook-registered
   (is (member 'refresh-cpu-features sb-ext:*init-hooks*)))
+
+(test refresh-hooks-run-after-probe
+  (let* ((seen nil)
+         (hook (lambda () (setf seen (detected-cpu-features))))
+         (*cpu-features-refresh-hooks* (list hook)))
+    (refresh-cpu-features)
+    (is (equal seen (detected-cpu-features)))))
+
+(test failing-refresh-hook-does-not-stop-others
+  (let* ((ran nil)
+         (*cpu-features-refresh-hooks*
+           (list (lambda () (error "boom"))
+                 (lambda () (setf ran t)))))
+    (handler-bind ((warning #'muffle-warning))
+      (refresh-cpu-features))
+    (is-true ran)))
+
+(test cpu-vendor-is-a-keyword
+  #+x86-64 (is (keywordp (cpu-vendor)))
+  #-x86-64 (is (or (null (cpu-vendor)) (keywordp (cpu-vendor)))))

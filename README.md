@@ -31,6 +31,15 @@ so an image moved to another machine reports the new machine's features.
 (detected-cpu-features)        ; raw detected list
 (cpu-feature-p :avx2)          ; predicate
 (refresh-cpu-features)         ; re-probe now
+(cpu-vendor)                   ; :intel, :amd, ... or NIL
+```
+
+Libraries that cache answers derived from the feature list can register a
+function in `*cpu-features-refresh-hooks*`; it is called after every
+re-probe, including the one at image startup:
+
+```lisp
+(pushnew 'recompute-my-cache sb-cpu-features:*cpu-features-refresh-hooks*)
 ```
 
 Masking is useful for tests or deliberately constrained runs:

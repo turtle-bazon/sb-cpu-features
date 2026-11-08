@@ -6,7 +6,9 @@
    #:detected-cpu-features
    #:cpu-feature-p
    #:refresh-cpu-features
+   #:cpu-vendor
    #:detect-cpu-features
+   #:*cpu-features-refresh-hooks*
    ;; Testing / masking
    #:*disabled-cpu-features*
    #:with-cpu-features-disabled

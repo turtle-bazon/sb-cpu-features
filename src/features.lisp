@@ -18,6 +18,14 @@
 
 (defvar *cpu-features-probed-p* nil)
 
+(defvar *cpu-features-refresh-hooks* nil
+  "Functions of no arguments called after every REFRESH-CPU-FEATURES,
+including the one run from SB-EXT:*INIT-HOOKS* when a saved image starts
+on another machine.  Libraries that cache answers derived from the
+feature list (for instance in special variables read from inner loops)
+add a function here to recompute those caches.  A hook that signals an
+error is skipped with a warning so one library cannot break another.")
+
 (defvar *disabled-cpu-features* nil
   "Features hidden from CPU-FEATURE-P, for tests or deliberately constrained
 runs.  Bind with WITH-CPU-FEATURES-DISABLED.")
@@ -210,6 +218,28 @@ these after CPUID plus XGETBV.  NAME is one of the strings \"avx_supported\",
           (nreverse features)))))
   #-x86-64 nil)
 
+(defun cpu-vendor ()
+  "The CPU vendor as a keyword: :INTEL, :AMD, :HYGON, :ZHAOXIN, another
+keyword made from the CPUID vendor string, or NIL when it is unknown
+(for instance on a non-x86 architecture)."
+  #+x86-64
+  (let ((leaf0 (cpuid-values 0 0)))
+    (when leaf0
+      ;; The vendor string is EBX, EDX, ECX, four little-endian bytes each.
+      (let ((name (with-output-to-string (out)
+                    (dolist (word (list (second leaf0) (fourth leaf0)
+                                        (third leaf0)))
+                      (dotimes (i 4)
+                        (write-char (code-char (ldb (byte 8 (* 8 i)) word))
+                                    out))))))
+        (cond ((string= name "GenuineIntel") :intel)
+              ((string= name "AuthenticAMD") :amd)
+              ((string= name "HygonGenuine") :hygon)
+              ((string= name "CentaurHauls") :zhaoxin)
+              ((string= name "  Shanghai  ") :zhaoxin)
+              (t (intern (string-upcase (string-trim " " name)) :keyword))))))
+  #-x86-64 nil)
+
 (defun detect-cpu-features ()
   "Detect the current machine's CPU features and return a list of keywords.
 On SBCL/x86-64 this is CPUID plus SBCL's XGETBV-backed AVX/AVX-512 flags,
@@ -225,6 +255,10 @@ SB-EXT:*INIT-HOOKS* so a saved image moved to another machine re-probes."
   (setf *detected-cpu-features* (remove-duplicates (detect-cpu-features)
                                                     :test #'eq)
         *cpu-features-probed-p* t)
+  (dolist (hook *cpu-features-refresh-hooks*)
+    (handler-case (funcall hook)
+      (error (condition)
+        (warn "sb-cpu-features refresh hook ~S failed: ~A" hook condition))))
   *detected-cpu-features*)
 
 (defun detected-cpu-features ()

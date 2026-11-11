@@ -2,7 +2,8 @@
 
 (defknown sb-cpu-features::%avx2-broadcast ((unsigned-byte 8))
     (sb-ext:simd-pack (unsigned-byte 8))
-    (foldable movable flushable))
+    (foldable movable flushable)
+  :overwrite-fndb-silently t)
 
 (sb-cpu-features::define-boring-vop sb-cpu-features::%avx2-broadcast
     ((byte unsigned-num :scs (unsigned-reg)))
